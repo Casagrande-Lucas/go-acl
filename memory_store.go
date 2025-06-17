@@ -3,6 +3,7 @@ package acl
 import "errors"
 
 type Store interface {
+	CreateUser(user *User) error
 	GetUser(userID string) (*User, error)
 	GetRole(roleName string) (*Role, error)
 	AddRole(role *Role) error
@@ -26,6 +27,11 @@ func NewMemoryStore() *MemoryStore {
 		users: make(map[string]*User),
 		roles: make(map[string]*Role),
 	}
+}
+
+func (s *MemoryStore) CreateUser(user *User) error {
+	s.users[user.ID] = user
+	return nil
 }
 
 func (s *MemoryStore) GetUser(userID string) (*User, error) {
