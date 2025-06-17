@@ -1,6 +1,6 @@
 # go-acl
 
-<img src="https://github.com/user-attachments/assets/bdfa4038-0ce6-4f10-a647-23f7c959c106" width="640" height="320" alt="Descrição da imagem">
+<img src="https://github.com/user-attachments/assets/1b863dd5-5243-41b6-ad28-f3bb7f78f817" width="640" height="320" alt="Descrição da imagem">
 
 **Access control, roles, and permissions (RBAC + Policy/Ability) for Go APIs — maximum performance, flexibility, and decoupling.**
 
