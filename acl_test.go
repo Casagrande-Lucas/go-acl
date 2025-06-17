@@ -8,16 +8,27 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestMemoryStore_CreateUser(t *testing.T) {
+	store := NewMemoryStore()
+	user := &User{ID: "alice"}
+	err := store.CreateUser(user)
+	require.NoError(t, err)
+
+	got, err := store.GetUser("alice")
+	require.NoError(t, err)
+	assert.Equal(t, "alice", got.ID)
+}
 
 func TestMemoryStore_AddRole_GetRole(t *testing.T) {
 	store := NewMemoryStore()
 	role := &Role{Name: "admin", Permissions: map[string]struct{}{"user:create": {}, "user:delete": {}}}
-	err := store.AddRole(role)
-	assert.NoError(t, err)
+	require.NoError(t, store.AddRole(role))
 
 	got, err := store.GetRole("admin")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "admin", got.Name)
 	assert.Contains(t, got.Permissions, "user:create")
 	assert.Contains(t, got.Permissions, "user:delete")
@@ -32,16 +43,26 @@ func TestMemoryStore_GetRole_NotFound(t *testing.T) {
 func TestMemoryStore_GetUser_AddRole_AssignRoleToUser(t *testing.T) {
 	store := NewMemoryStore()
 	role := &Role{Name: "dev", Permissions: map[string]struct{}{"api:use": {}}}
-	store.AddRole(role)
-	store.users["john"] = &User{ID: "john"}
+	require.NoError(t, store.AddRole(role))
+
+	user := &User{ID: "john"}
+	require.NoError(t, store.CreateUser(user))
 
 	err := store.AssignRoleToUser("john", "dev")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	user, err := store.GetUser("john")
-	assert.NoError(t, err)
+	user, err = store.GetUser("john")
+	require.NoError(t, err)
 	assert.Len(t, user.Roles, 1)
-	assert.Equal(t, "dev", user.Roles[0].Name)
+
+	found := false
+	for _, r := range user.Roles {
+		if r.Name == "dev" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "role 'dev' should be assigned to user")
 }
 
 func TestMemoryStore_AssignRoleToUser_NotFound(t *testing.T) {
@@ -53,14 +74,14 @@ func TestMemoryStore_AssignRoleToUser_NotFound(t *testing.T) {
 func TestMemoryStore_AddPermissionToRole(t *testing.T) {
 	store := NewMemoryStore()
 	role := &Role{Name: "qa"}
-	store.AddRole(role)
+	require.NoError(t, store.AddRole(role))
 
 	err := store.AddPermissionToRole("qa", "test:run")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	r, _ := store.GetRole("qa")
-	_, ok := r.Permissions["test:run"]
-	assert.True(t, ok)
+	r, err := store.GetRole("qa")
+	require.NoError(t, err)
+	assert.Contains(t, r.Permissions, "test:run")
 }
 
 func TestMemoryStore_AddPermissionToRole_RoleNotFound(t *testing.T) {
@@ -78,11 +99,15 @@ func TestMemoryStore_GetUser_NotFound(t *testing.T) {
 func TestAuthorizer_HasPermission(t *testing.T) {
 	store := NewMemoryStore()
 	role := &Role{Name: "ops", Permissions: map[string]struct{}{"api:read": {}}}
-	store.AddRole(role)
-	store.users["ops"] = &User{ID: "ops", Roles: []*Role{role}}
+	require.NoError(t, store.AddRole(role))
+
+	user := &User{ID: "ops", Roles: []*Role{role}}
+	require.NoError(t, store.CreateUser(user))
+
 	authz := NewAuthorizer(store)
 
-	user, _ := store.GetUser("ops")
+	user, err := store.GetUser("ops")
+	require.NoError(t, err)
 	assert.True(t, authz.HasPermission(user, "api:read"))
 	assert.False(t, authz.HasPermission(user, "api:write"))
 }
@@ -90,7 +115,8 @@ func TestAuthorizer_HasPermission(t *testing.T) {
 func TestAuthorizer_RegisterPolicy_Allow(t *testing.T) {
 	store := NewMemoryStore()
 	user := &User{ID: "42"}
-	store.users["42"] = user
+	require.NoError(t, store.CreateUser(user))
+
 	authz := NewAuthorizer(store)
 
 	authz.RegisterPolicy("can_edit", func(u *User, resource any) bool {
@@ -105,7 +131,8 @@ func TestAuthorizer_RegisterPolicy_Allow(t *testing.T) {
 func TestAuthorizer_RegisterPolicy_Deny(t *testing.T) {
 	store := NewMemoryStore()
 	user := &User{ID: "99"}
-	store.users["99"] = user
+	require.NoError(t, store.CreateUser(user))
+
 	authz := NewAuthorizer(store)
 
 	authz.RegisterPolicy("can_edit", func(u *User, resource any) bool {
@@ -120,23 +147,29 @@ func TestAuthorizer_RegisterPolicy_Deny(t *testing.T) {
 func TestAuthorizer_Can_FallbackToPermission(t *testing.T) {
 	store := NewMemoryStore()
 	role := &Role{Name: "auditor", Permissions: map[string]struct{}{"log:read": {}}}
-	store.AddRole(role)
-	store.users["a"] = &User{ID: "a", Roles: []*Role{role}}
+	require.NoError(t, store.AddRole(role))
+
+	user := &User{ID: "a", Roles: []*Role{role}}
+	require.NoError(t, store.CreateUser(user))
+
 	authz := NewAuthorizer(store)
 
-	user, _ := store.GetUser("a")
+	user, err := store.GetUser("a")
+	require.NoError(t, err)
 	assert.True(t, authz.Can(user, "log:read", nil))
 	assert.False(t, authz.Can(user, "log:delete", nil))
 }
 
-func TestRBACMiddleware_AllowAndDeny(t *testing.T) {
+func TestRBACMiddleware_Allow(t *testing.T) {
 	store := NewMemoryStore()
 	role := &Role{Name: "api", Permissions: map[string]struct{}{"endpoint:access": {}}}
-	store.AddRole(role)
-	store.users["u1"] = &User{ID: "u1", Roles: []*Role{role}}
+	require.NoError(t, store.AddRole(role))
+
+	user := &User{ID: "u1", Roles: []*Role{role}}
+	require.NoError(t, store.CreateUser(user))
+
 	authz := NewAuthorizer(store)
 
-	// User extraction function for testing
 	userFromRequest := func(r *http.Request) *User {
 		id := r.Header.Get("X-User-ID")
 		u, _ := store.GetUser(id)
@@ -149,29 +182,48 @@ func TestRBACMiddleware_AllowAndDeny(t *testing.T) {
 
 	mw := RBACMiddleware(authz, "endpoint:access", userFromRequest)(handler)
 
-	// Test: Allow
-	req1 := httptest.NewRequest("GET", "/", nil)
-	req1.Header.Set("X-User-ID", "u1")
-	w1 := httptest.NewRecorder()
-	mw.ServeHTTP(w1, req1)
-	assert.Equal(t, http.StatusOK, w1.Code)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-User-ID", "u1")
+	w := httptest.NewRecorder()
 
-	// Test: Deny
-	req2 := httptest.NewRequest("GET", "/", nil)
-	req2.Header.Set("X-User-ID", "nobody")
-	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, req2)
-	assert.Equal(t, http.StatusForbidden, w2.Code)
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestRBACMiddleware_Deny(t *testing.T) {
+	store := NewMemoryStore()
+	authz := NewAuthorizer(store)
+
+	userFromRequest := func(r *http.Request) *User {
+		id := r.Header.Get("X-User-ID")
+		u, _ := store.GetUser(id)
+		return u
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := RBACMiddleware(authz, "endpoint:access", userFromRequest)(handler)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-User-ID", "nobody")
+	w := httptest.NewRecorder()
+
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 
 	var resp map[string]string
-	json.NewDecoder(bytes.NewReader(w2.Body.Bytes())).Decode(&resp)
+	err := json.NewDecoder(bytes.NewReader(w.Body.Bytes())).Decode(&resp)
+	require.NoError(t, err)
 	assert.Equal(t, "forbidden", resp["error"])
 }
 
-func TestPolicyMiddleware_AllowAndDeny(t *testing.T) {
+func TestPolicyMiddleware_Allow(t *testing.T) {
 	store := NewMemoryStore()
 	user := &User{ID: "12"}
-	store.users["12"] = user
+	require.NoError(t, store.CreateUser(user))
+
 	authz := NewAuthorizer(store)
 	authz.RegisterPolicy("custom", func(u *User, resource any) bool {
 		obj, ok := resource.(map[string]any)
@@ -196,17 +248,52 @@ func TestPolicyMiddleware_AllowAndDeny(t *testing.T) {
 
 	mw := PolicyMiddleware(authz, "custom", userFromRequest, resourceFromRequest)(handler)
 
-	// Allow
 	req := httptest.NewRequest("GET", "/?allow=true", nil)
 	req.Header.Set("X-User-ID", "12")
 	w := httptest.NewRecorder()
+
 	mw.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
 
-	// Deny
-	req2 := httptest.NewRequest("GET", "/?allow=false", nil)
-	req2.Header.Set("X-User-ID", "12")
-	w2 := httptest.NewRecorder()
-	mw.ServeHTTP(w2, req2)
-	assert.Equal(t, http.StatusForbidden, w2.Code)
+func TestPolicyMiddleware_Deny(t *testing.T) {
+	store := NewMemoryStore()
+	user := &User{ID: "12"}
+	require.NoError(t, store.CreateUser(user))
+
+	authz := NewAuthorizer(store)
+	authz.RegisterPolicy("custom", func(u *User, resource any) bool {
+		obj, ok := resource.(map[string]any)
+		return ok && obj["allowed"] == true
+	})
+
+	userFromRequest := func(r *http.Request) *User {
+		id := r.Header.Get("X-User-ID")
+		u, _ := store.GetUser(id)
+		return u
+	}
+	resourceFromRequest := func(r *http.Request) any {
+		if r.URL.Query().Get("allow") == "true" {
+			return map[string]any{"allowed": true}
+		}
+		return map[string]any{"allowed": false}
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := PolicyMiddleware(authz, "custom", userFromRequest, resourceFromRequest)(handler)
+
+	req := httptest.NewRequest("GET", "/?allow=false", nil)
+	req.Header.Set("X-User-ID", "12")
+	w := httptest.NewRecorder()
+
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	var resp map[string]string
+	err := json.NewDecoder(bytes.NewReader(w.Body.Bytes())).Decode(&resp)
+	require.NoError(t, err)
+	assert.Equal(t, "forbidden", resp["error"])
 }
