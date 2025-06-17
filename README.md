@@ -248,7 +248,7 @@ func (s *GormStore) GetUser(userID string) (*acl.User, error) {
 }
 ```
 
-**Usage with SQLite (but works with PostgreSQL, MySQL, etc):**
+**Usage with GORM (but works with PostgreSQL, MySQL, etc):**
 
 ```go
 import "gorm.io/driver/sqlite"
